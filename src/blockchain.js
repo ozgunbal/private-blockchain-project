@@ -64,7 +64,21 @@ class Blockchain {
     _addBlock(block) {
         let self = this;
         return new Promise(async (resolve, reject) => {
-           
+            try {
+                block.height = self.height + 1,
+                block.hash = SHA256(block.body).toString()
+                block.time = new Date().getTime().toString().slice(0,-3);
+                if(this.height !== -1){
+                    const previousBlock = self.chain[self.chain.length - 1];
+                    block.previousBlockHash = previousBlock.hash;
+                }
+                self.chain.push(block);
+                self.height += 1;
+                resolve(block);
+            } catch (error) {
+                reject(error)
+            }
+            
         });
     }
 
@@ -78,7 +92,7 @@ class Blockchain {
      */
     requestMessageOwnershipVerification(address) {
         return new Promise((resolve) => {
-            
+            resolve(`${address}:${new Date().getTime().toString().slice(0,-3)}:starRegistry`)
         });
     }
 
@@ -102,7 +116,28 @@ class Blockchain {
     submitStar(address, message, signature, star) {
         let self = this;
         return new Promise(async (resolve, reject) => {
-            
+            const [, time] = message.split(':');
+            const messageTime = parseInt(time, 10);
+            const currentTime = parseInt(new Date().getTime().toString().slice(0, -3), 10);
+
+            console.log('currentTime: ', currentTime, 'messageTime: ', messageTime);
+            if (currentTime - messageTime > (5 * 60)) {
+                reject('Time elapsed is more than 5 minutes');
+            }
+
+            if (!bitcoinMessage.verify(message, address, signature)) {
+                reject('Message cannot be verified');
+            }
+
+            const newBlock = new BlockClass.Block({
+                address,
+                message,
+                signature,
+                star
+            });
+            self._addBlock(newBlock);
+            self.validateChain();
+            resolve(newBlock);
         });
     }
 
@@ -115,7 +150,12 @@ class Blockchain {
     getBlockByHash(hash) {
         let self = this;
         return new Promise((resolve, reject) => {
-           
+            const block = self.chain.filter(p => p.hash === hash)[0];
+            if(block){
+                resolve(block);
+            } else {
+                resolve(null);
+            }
         });
     }
 
@@ -127,7 +167,7 @@ class Blockchain {
     getBlockByHeight(height) {
         let self = this;
         return new Promise((resolve, reject) => {
-            let block = self.chain.filter(p => p.height === height)[0];
+            const block = self.chain.filter(p => p.height === height)[0];
             if(block){
                 resolve(block);
             } else {
@@ -144,9 +184,20 @@ class Blockchain {
      */
     getStarsByWalletAddress (address) {
         let self = this;
-        let stars = [];
         return new Promise((resolve, reject) => {
-            
+            let stars = [];
+            self.chain.forEach(async p => {
+                // skip genesis block
+                if (p.previousBlockHash === null) {
+                    return
+                }
+
+                const blockData =  await p.getBData();
+                if (blockData.address === address) {
+                    stars.push(blockData.star)
+                }
+            })
+            resolve(stars);
         });
     }
 
@@ -160,7 +211,16 @@ class Blockchain {
         let self = this;
         let errorLog = [];
         return new Promise(async (resolve, reject) => {
-            
+            self.chain.forEach(async (p, idx, chain) => {
+                const result = await p.validate()
+                if (!result) {
+                    errorLog.push(`Block #${p.height} is not valid`)
+                }
+                if (p.height !== 0 && p.hash !== chain[idx - 1].hash) {
+                    errorLog.push(`Block #${p.height}'s previous hash doesn't match`)
+                }
+            });
+            resolve(errorLog)
         });
     }
 
